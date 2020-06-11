@@ -68,6 +68,7 @@
 #define MQ_CMD_SCHEMA_SENT "device.schema.sent"
 
 cloud_cb_t cloud_cb;
+amqp_bytes_t queue_fog;
 amqp_bytes_t queue_reply;
 char *user_auth_token;
 char *cloud_events[MSG_TYPES_LENGTH];
@@ -221,7 +222,6 @@ static bool on_cloud_receive_message(const char *exchange,
 }
 static int create_fog_queue(const char *id)
 {
-	amqp_bytes_t queue_fog;
 	char queue_fog_name[100];
 	int msg_type;
 	int err;
@@ -240,7 +240,6 @@ static int create_fog_queue(const char *id)
 					      cloud_events[msg_type]);
 		if (err) {
 			l_error("Error on set up queue to consume");
-			amqp_bytes_free(queue_fog);
 			return -1;
 		}
 	}
@@ -251,7 +250,6 @@ static int create_fog_queue(const char *id)
 		return -1;
 	}
 
-	amqp_bytes_free(queue_fog);
 	return 0;
 }
 
@@ -276,11 +274,31 @@ static int create_reply_queue(const char *id)
 	return 0;
 }
 
+static void clean_queues(void)
+{
+	if (queue_reply.bytes) {
+		if (mq_delete_queue(queue_reply))
+			l_error("Error when delete Reply Queue");
+
+		amqp_bytes_free(queue_reply);
+		queue_reply.bytes = NULL;
+	}
+
+	if (queue_fog.bytes) {
+		if (mq_delete_queue(queue_fog))
+			l_error("Error when delete Fog Queue");
+
+		amqp_bytes_free(queue_fog);
+		queue_fog.bytes = NULL;
+	}
+}
+
 static int set_cloud_events(const char *id)
 {
 	char binding_key_reply[100];
 	char binding_key_update[100];
 	char binding_key_request[100];
+	int msg_type;
 
 	snprintf(binding_key_reply, sizeof(binding_key_reply), "%s-%s",
 		 MQ_QUEUE_REPLY, id);
@@ -290,6 +308,13 @@ static int set_cloud_events(const char *id)
 
 	snprintf(binding_key_request, sizeof(binding_key_request), "%s.%s.%s",
 		 MQ_EVENT_PREFIX_DEVICE, id, MQ_EVENT_POSTFIX_DATA_REQUEST);
+
+	for (msg_type = UPDATE_MSG; msg_type < MSG_TYPES_LENGTH; msg_type++) {
+		if (cloud_events[msg_type] != NULL) {
+			l_free(cloud_events[msg_type]);
+			cloud_events[msg_type] = NULL;
+		}
+	}
 
 	cloud_events[UPDATE_MSG] = l_strdup(binding_key_update);
 	cloud_events[REQUEST_MSG] = l_strdup(binding_key_request);
@@ -572,6 +597,9 @@ int cloud_read_start(const char *id, cloud_cb_t read_handler,
 {
 	cloud_cb = read_handler;
 
+	/* Check if already create Fog and Reply queue and clean up them */
+	clean_queues();
+
 	if (set_cloud_events(id))
 		return -1;
 
@@ -602,8 +630,15 @@ int cloud_start(char *url, char *user_token, cloud_connected_cb_t connected_cb,
 
 void cloud_stop(void)
 {
-	if (queue_reply.bytes)
+	if (queue_reply.bytes) {
 		amqp_bytes_free(queue_reply);
+		queue_reply.bytes = NULL;
+	}
+
+	if (queue_fog.bytes) {
+		amqp_bytes_free(queue_fog);
+		queue_fog.bytes = NULL;
+	}
 
 	destroy_cloud_events();
 	mq_stop();

@@ -691,12 +691,6 @@ static bool on_cloud_receive(const struct cloud_msg *msg, void *user_data)
 
 static void on_cloud_connected(void *user_data)
 {
-	int err;
-
-	err = cloud_read_start(thing.id, on_cloud_receive, NULL);
-	if (err < 0)
-		return;
-
 	l_info("Connected to Cloud %s", thing.rabbitmq_url);
 
 	conn_handler(CLOUD, true);
@@ -801,6 +795,11 @@ static int create_data_item_polling(void)
 	}
 
 	return 0;
+}
+
+int device_start_read_cloud(void)
+{
+	return cloud_read_start(thing.id, on_cloud_receive, NULL);
 }
 
 int device_start_config(void)
